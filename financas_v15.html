@@ -1404,6 +1404,11 @@ async function boot(){
   if(G.saldoInicial.contaData)document.getElementById('si-conta-data').value=G.saldoInicial.contaData;
   if(G.saldoInicial.investData)document.getElementById('si-invest-data').value=G.saldoInicial.investData;
   if(G.appStart)document.getElementById('cfg-app-start').value=G.appStart;
+  else {
+    // Pré-preencher com mês atual como sugestão, sem salvar automaticamente
+    const nowMonth=new Date().toISOString().slice(0,7);
+    document.getElementById('cfg-app-start').value=nowMonth;
+  }
   buildYearTabs();buildAnnYearTabs();updMonthLbl();populateFilters();
   renderDash();applyHide();
 }
@@ -1645,9 +1650,28 @@ function calcPatrimonio(){
     else if(i.tipo==='resgate')investido-=vv;
   });
   investido=Math.max(0,investido);
-  // disp: saldo em conta = saldo inicial + receitas - despesas diretas - aportes + resgates
-  // Assinaturas sem cartão: o usuário deve lançar manualmente como despesa
-  const disp=siConta+sum(recs,'valor')-dEfetivas-totalAportes+totalResgates;
+  // Assinaturas sem cartão pagas via pix/débito/dinheiro/boleto:
+  // calculamos o total gasto desde a data de início do saldo
+  let totalSubsSemCartao=0;
+  const today=new Date();
+  G.assinaturas.filter(s=>!s.cartao&&!s.cancelled||(s.cartao==='')).forEach(s=>{
+    if(s.cartao)return; // com cartão: entra via fatura
+    const iniRaw=s.inicio?s.inicio.slice(0,7):null;
+    if(!iniRaw)return;
+    // respeita data de início do saldo inicial
+    const effIni=cIni&&iniRaw<cIni.slice(0,7)?cIni.slice(0,7):iniRaw;
+    const iniDate=new Date(effIni+'-01T12:00:00');
+    const fimDate=s.cancelled&&s.cancelamento?new Date(s.cancelamento+'T12:00:00'):today;
+    // Conta meses de cobrança efetivos até hoje
+    let y=iniDate.getFullYear(),m=iniDate.getMonth();
+    const fy=fimDate.getFullYear(),fm=fimDate.getMonth();
+    let meses=0;
+    while(y<fy||(y===fy&&m<=fm)){meses++;m++;if(m>11){m=0;y++;}}
+    if(meses<=0)return;
+    totalSubsSemCartao+=subMVal(s)*meses;
+  });
+  // disp: saldo inicial + receitas - despesas diretas - assinaturas sem cartão - aportes + resgates
+  const disp=siConta+sum(recs,'valor')-dEfetivas-totalSubsSemCartao-totalAportes+totalResgates;
   const fatAberta=calcFaturaAbertaMes(G.cy,G.cm);
   return {disp:Math.max(0,disp),investido,fatAberta,total:Math.max(0,disp)+investido};
 }
@@ -2471,7 +2495,13 @@ function renderParcelas(){
       <div class="card r"><div class="cl">Parcelas em Aberto</div><div class="cv r">${ativas.length}</div></div>
       <div class="card"><div class="cl">Comprometimento Mensal</div><div class="cv">${fmt(totParcMes)}</div></div>
       <div class="card a"><div class="cl">Total Restante</div><div class="cv a">${fmt(totRestante)}</div></div>
-    </div>`;
+    </div>
+    ${!G.appStart&&ativas.some(d=>parseInt(d.parcAt||1)>1)?`<div class="info-box" style="background:#FFF3E0;border-color:#E8962A;margin-top:8px">
+      ⚠️ <strong>Configure o início do app!</strong> Você tem parcelas iniciadas antes de começar a usar o app.
+      Vá em <strong>Configurações → Início do App</strong> e defina o mês de início para que as parcelas já pagas apareçam corretamente.
+      <button class="btn btn-p btn-sm" style="margin-top:8px;display:block" onclick="SP('config',document.querySelector('.nav-item[onclick*=config]'))">→ Ir para Configurações</button>
+    </div>`:''}`;
+
 
   if(!ativas.length){
     document.getElementById('parc-grid').innerHTML='<div class="empty" style="grid-column:1/-1"><div class="ei">✓</div><p>Nenhuma parcela em aberto</p></div>';
